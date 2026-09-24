@@ -1,0 +1,70 @@
+name: Create PR to update Helm image tag
+
+on:
+  workflow_dispatch:
+    inputs:
+      component:
+        description: 'component to update (app/db/memcached/rabbitmq)'
+        required: true
+        default: app
+      tag:
+        description: 'new image tag'
+        required: true
+        default: 'latest'
+      image:
+        description: 'optional image override (leave empty to keep existing image)'
+        required: false
+        default: ''
+
+jobs:
+  create-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyyaml
+
+      - name: Update values.yaml
+        env:
+          COMPONENT: ${{ github.event.inputs.component }}
+          TAG: ${{ github.event.inputs.tag }}
+          IMAGE_OVERRIDE: ${{ github.event.inputs.image }}
+        run: |
+          python - <<'PY'
+          import sys, yaml, pathlib, os
+          p = pathlib.Path('helm/vprofile/values.yaml')
+          data = yaml.safe_load(p.read_text())
+          comp = os.environ.get('COMPONENT','app')
+          tag = os.environ.get('TAG')
+          img_override = os.environ.get('IMAGE_OVERRIDE') or None
+          if comp not in data:
+              print('Component not found in values.yaml:', comp)
+              sys.exit(1)
+          if img_override:
+              data[comp]['image'] = img_override
+          data[comp]['tag'] = tag
+          p.write_text(yaml.safe_dump(data, sort_keys=False))
+          print('Updated', comp, 'tag to', tag)
+          PY
+
+      - name: Create pull request
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore: update ${{ github.event.inputs.component }} image tag to ${{ github.event.inputs.tag }}"
+          branch: "image-update-${{ github.event.inputs.component }}-${{ github.event.inputs.tag }}"
+          title: "chore: update ${{ github.event.inputs.component }} image to ${{ github.event.inputs.tag }}"
+          body: "This PR updates the Helm helm/vprofile/values.yaml for ${{ github.event.inputs.component }} image tag to ${{ github.event.inputs.tag }}."
+          base: main
+          labels: image-update
